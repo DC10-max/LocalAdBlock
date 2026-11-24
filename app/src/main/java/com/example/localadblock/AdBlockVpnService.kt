@@ -171,6 +171,7 @@ class AdBlockVpnService : VpnService() {
         val result = LinkedHashMap<String, String>()
         for (host in st.ipBlockHosts()) {
             if (result.size >= MAX_IP_ROUTES) break
+            if (filter.isUserAllowed(host)) continue // 許可した広告ネットワークなどはIPでも止めない
             try {
                 val literal = IPV4.matches(host) || host.contains(':')
                 val addrs = if (literal) arrayOf(InetAddress.getByName(host)) else InetAddress.getAllByName(host)

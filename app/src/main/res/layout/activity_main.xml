@@ -87,6 +87,21 @@
                 android:text="設定を開く" />
         </LinearLayout>
 
+        <!-- 広告ネットワークごとの許可 -->
+        <TextView style="@style/Section" android:text="広告ネットワークごとに許可" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="チェックしたネットワークの広告は表示されます。アプリによっては、仲介役のネットワーク（Google・AppLovin・ironSource・Unity など）も許可しないと広告が出ないことがあります。"
+            android:textSize="12sp" />
+
+        <LinearLayout
+            android:id="@+id/networksBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
         <!-- 許可リスト -->
         <TextView style="@style/Section" android:text="許可リスト（ここに書いた広告だけ表示）" />
 

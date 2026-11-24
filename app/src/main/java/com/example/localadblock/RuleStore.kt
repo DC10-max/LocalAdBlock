@@ -50,6 +50,11 @@ class RuleStore(private val ctx: Context) {
         toAdd
     }
 
+    /** 許可する広告ネットワークの id（AdNetworks.all の id） */
+    var allowedNetworks: Set<String>
+        get() = prefs.getStringSet("allowedNetworks", emptySet())?.toSet() ?: emptySet()
+        set(v) = prefs.edit().putStringSet("allowedNetworks", v.toSet()).apply()
+
     var mitmEnabled: Boolean
         get() = prefs.getBoolean("mitm", true)
         set(v) = prefs.edit().putBoolean("mitm", v).apply()
@@ -162,6 +167,8 @@ class RuleStore(private val ctx: Context) {
         if (customBlockFile.exists()) customBlockFile.forEachLine { b.addBlockLine(it) }
         listsDir.listFiles()?.filter { it.name.endsWith(".txt") }?.forEach { f -> f.forEachLine { b.addBlockLine(it) } }
         if (allowFile.exists()) allowFile.forEachLine { b.addAllowLine(it) }
+        val allowedIds = allowedNetworks
+        AdNetworks.all.filter { it.id in allowedIds }.forEach { n -> n.domains.forEach { b.addAllowLine("||$it^") } }
         return b.build()
     }
 }

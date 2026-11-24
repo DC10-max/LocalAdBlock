@@ -15,6 +15,8 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.provider.Settings
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.LinearLayout
 import android.widget.EditText
 import android.widget.Switch
 import android.widget.TextView
@@ -81,6 +83,8 @@ class MainActivity : Activity() {
             toast("次回の開始から反映されます")
         }
 
+        setupNetworks()
+
         swAuto.isChecked = store.autoBlockEnabled
         swAuto.setOnCheckedChangeListener { _, checked -> store.autoBlockEnabled = checked }
         findViewById<Button>(R.id.btnFinder).setOnClickListener {
@@ -128,6 +132,22 @@ class MainActivity : Activity() {
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF)
+        }
+    }
+
+    private fun setupNetworks() {
+        val box = findViewById<LinearLayout>(R.id.networksBox)
+        val allowed = store.allowedNetworks
+        for (n in AdNetworks.all) {
+            box.addView(CheckBox(this).apply {
+                text = n.name
+                isChecked = n.id in allowed
+                setOnCheckedChangeListener { _, checked ->
+                    store.allowedNetworks = if (checked) store.allowedNetworks + n.id else store.allowedNetworks - n.id
+                    reloadService()
+                    toast(if (checked) "${n.name} の広告を許可しました" else "${n.name} の広告をブロックします")
+                }
+            })
         }
     }
 

@@ -12,7 +12,7 @@ object AdHeuristics {
     class Result(val level: Level, val rule: String, val reason: String)
 
     /** 既知の広告ネットワーク（ここに一致したらこの単位でブロック） */
-    private val NETWORKS = setOf(
+    private val NETWORKS: Set<String> = AdNetworks.all.flatMap { it.domains }.toSet() + setOf(
         // Google / 一般 DSP・SSP
         "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google.com",
         "adnxs.com", "criteo.com", "criteo.net", "taboola.com", "outbrain.com", "amazon-adsystem.com",
@@ -59,7 +59,10 @@ object AdHeuristics {
 
     fun classify(rawHost: String): Result {
         val host = FilterEngine.normalize(rawHost)
-        networkMatch(host)?.let { return Result(Level.STRONG, it, "広告ネットワーク") }
+        networkMatch(host)?.let { d ->
+            val name = AdNetworks.find(d)?.name
+            return Result(Level.STRONG, d, if (name != null) "広告ネットワーク: $name" else "広告ネットワーク")
+        }
         if (isProtected(host)) return Result(Level.NONE, host, "")
         val tokens = host.split('.').dropLast(1)
             .flatMap { it.split('-', '_') }

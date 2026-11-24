@@ -109,5 +109,10 @@ fun main() {
     check("user allowed", f.isUserAllowed("good-ads.example") && f.isUserAllowed("partner.ads.example.com") && !f.isUserAllowed("ads.example.com"))
     DnsHistory.add("A.Example.", 10123, false, DnsHistory.VIA_DNS)
     check("history", DnsHistory.since(60_000).last().host == "a.example")
+
+    check("network name", AdHeuristics.classify("api16-access.pangle.io").reason.contains("Pangle") && AdNetworks.find("x.rayjump.com")?.id == "mintegral")
+    val b2 = FilterEngine.Builder(); b2.addBlockLine("||pangle.io^"); AdNetworks.all.first { it.id == "pangle" }.domains.forEach { b2.addAllowLine("||$it^") }
+    val f2 = b2.build()
+    check("allowed network passes", f2.checkHost("api.pangle.io") == ALLOWED_BY_LIST && f2.isUserAllowed("sf16-static.i18n-pglstatp.com"))
     println(if (failed == 0) "ALL PASSED" else "$failed FAILED")
 }
