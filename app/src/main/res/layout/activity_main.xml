@@ -17,6 +17,14 @@
             android:textSize="18sp"
             android:textStyle="bold" />
 
+        <TextView
+            android:id="@+id/tvWarn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="#E65100"
+            android:visibility="gone" />
+
         <Button
             android:id="@+id/btnToggle"
             android:layout_width="match_parent"
@@ -78,11 +86,17 @@
             android:id="@+id/etBlock"
             style="@style/RuleEditor" />
 
+        <TextView style="@style/Section" android:text="IPでもブロックするホスト（DNSを使わないアプリ対策）" />
+
+        <EditText
+            android:id="@+id/etIpBlock"
+            style="@style/RuleEditor" />
+
         <Button
             android:id="@+id/btnSaveRules"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="許可リスト・ブロックリストを保存" />
+            android:text="リストをすべて保存" />
 
         <!-- 購読 -->
         <TextView style="@style/Section" android:text="購読するフィルタリスト（1行1URL）" />

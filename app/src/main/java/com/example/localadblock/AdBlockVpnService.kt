@@ -18,22 +18,25 @@ import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import android.system.StructPollfd
-import java.io.FileDescriptor
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetAddress
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
 /**
  * ローカルVPN。
- *  - tun には「仮想DNSサーバー(10.111.222.2)」宛ての経路だけを張る → DNS 問い合わせだけを受け取り、広告ドメインを NXDOMAIN にする
- *  - それ以外の通信は VPN を通らない（通信速度・電池への影響が小さい）
+ *  - 仮想DNSサーバー(10.111.222.2)宛ての経路 → DNS 問い合わせを受け取り、広告ドメインを NXDOMAIN にする
+ *  - 「IPでもブロック」に書いたホストのIPアドレス宛ての経路 → TCP は RST を返して即失敗させ、UDP は捨てる
+ *    （DNSを使わずに広告サーバーへ直接つなぐアプリへの対策）
+ *  - それ以外の通信は VPN を通らない
  *  - setHttpProxy() でローカルプロキシ(127.0.0.1:8899)を配布 → HTTPS検査・URL単位のブロック
  */
 class AdBlockVpnService : VpnService() {
@@ -45,25 +48,34 @@ class AdBlockVpnService : VpnService() {
 
         private const val VPN_ADDRESS = "10.111.222.1"
         private const val VPN_DNS = "10.111.222.2"
+        private const val VPN_ADDRESS6 = "fd66:6164:626c:6f63::1"
         private const val FALLBACK_DNS = "1.1.1.1"
         private const val CHANNEL = "vpn"
         private const val NOTIF_ID = 1
+        private const val MAX_IP_ROUTES = 1000
+        private const val IP_REFRESH_MS = 30 * 60 * 1000L
+        private val VPN_DNS_BYTES = byteArrayOf(10, 111, 222.toByte(), 2)
+        private val IPV4 = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
 
         @Volatile var isRunning = false
             private set
         @Volatile var mitmActive = false
             private set
         @Volatile var lastError: String? = null
+        @Volatile var ipRouteCount = 0
+            private set
     }
 
     @Volatile private var filter: FilterEngine = FilterEngine.Builder().build()
-    private var tun: ParcelFileDescriptor? = null
+    /** IPアドレス → ホスト名 */
+    @Volatile private var blockedIps: Map<String, String> = emptyMap()
+    private var worker: TunWorker? = null
     private var proxy: MitmProxy? = null
     private var dnsPool: ExecutorService? = null
-    private var wakeRead: FileDescriptor? = null
-    private var wakeWrite: FileDescriptor? = null
     private var store: RuleStore? = null
+    private var refresher: Thread? = null
     private val lock = Any()
+    private val ipLogTimes = ConcurrentHashMap<String, Long>()
 
     @Volatile private var cachedDns: InetAddress? = null
     @Volatile private var cachedDnsAt = 0L
@@ -96,30 +108,17 @@ class AdBlockVpnService : VpnService() {
                 val ca = CertificateAuthority.get(this)
                 mitmActive = st.mitmEnabled && ca.isInstalledInUserStore()
 
-                proxy = MitmProxy(PROXY_PORT, { filter }, ca, st, { mitmActive }).also { it.start() }
+                proxy = MitmProxy(PROXY_PORT, { filter }, ca, st, { mitmActive }, { ip -> blockedIps[ip] })
+                    .also { it.start() }
                 dnsPool = Executors.newFixedThreadPool(8)
 
-                val builder = Builder()
-                    .setSession(getString(R.string.app_name))
-                    .addAddress(VPN_ADDRESS, 32)
-                    .addRoute(VPN_DNS, 32)
-                    .addDnsServer(VPN_DNS)
-                    .setMtu(1500)
-                    .setHttpProxy(ProxyInfo.buildDirectProxy("127.0.0.1", PROXY_PORT))
-                // 自分自身は VPN の外に出す（上流への接続がループしないように）
-                runCatching { builder.addDisallowedApplication(packageName) }
-
-                val fd = builder.establish()
-                    ?: throw IllegalStateException("VPNの許可がありません。アプリの画面から開始してください")
-                tun = fd
-                val pipe = Os.pipe()
-                wakeRead = pipe[0]
-                wakeWrite = pipe[1]
+                blockedIps = resolveIpBlocks(st)
+                worker = establishTunnel(blockedIps)
                 isRunning = true
-                thread(name = "vpn-dns") { dnsLoop(fd, pipe[0]) }
+                refresher = thread(name = "ip-refresh", isDaemon = true) { refreshLoop() }
 
                 val msg = "ブロック規則 ${filter.blockRuleCount} 件 / 許可規則 ${filter.allowRuleCount} 件 / " +
-                    "HTTPS検査 ${if (mitmActive) "ON" else "OFF"}"
+                    "IP遮断 ${blockedIps.size} 件 / HTTPS検査 ${if (mitmActive) "ON" else "OFF"}"
                 Stats.log("開始: $msg")
                 if (st.mitmEnabled && !mitmActive) Stats.log("CA証明書が未インストールのため HTTPS検査は OFF です")
                 updateNotification(msg)
@@ -133,58 +132,181 @@ class AdBlockVpnService : VpnService() {
         }
     }
 
+    private fun establishTunnel(ips: Map<String, String>): TunWorker {
+        val builder = Builder()
+            .setSession(getString(R.string.app_name))
+            .addAddress(VPN_ADDRESS, 32)
+            .addRoute(VPN_DNS, 32)
+            .addDnsServer(VPN_DNS)
+            .setMtu(1500)
+            .setHttpProxy(ProxyInfo.buildDirectProxy("127.0.0.1", PROXY_PORT))
+        var hasV6 = false
+        var count = 0
+        for (ip in ips.keys) {
+            try {
+                val a = InetAddress.getByName(ip) // 数値表記なので名前解決はしない
+                if (a is Inet6Address) {
+                    builder.addRoute(a, 128); hasV6 = true
+                } else {
+                    builder.addRoute(a, 32)
+                }
+                count++
+            } catch (_: Exception) {
+            }
+        }
+        if (hasV6) builder.addAddress(VPN_ADDRESS6, 128)
+        // 自分自身は VPN の外に出す（上流への接続がループしないように）
+        runCatching { builder.addDisallowedApplication(packageName) }
+
+        val fd = builder.establish()
+            ?: throw IllegalStateException("VPNの許可がありません。アプリの画面から開始してください")
+        ipRouteCount = count
+        return TunWorker(fd).also { it.start() }
+    }
+
+    /** 「IPでもブロック」のホストを名前解決する（このアプリは VPN の外なので実際のDNSが使われる） */
+    private fun resolveIpBlocks(st: RuleStore): Map<String, String> {
+        val result = LinkedHashMap<String, String>()
+        for (host in st.ipBlockHosts()) {
+            if (result.size >= MAX_IP_ROUTES) break
+            try {
+                val literal = IPV4.matches(host) || host.contains(':')
+                val addrs = if (literal) arrayOf(InetAddress.getByName(host)) else InetAddress.getAllByName(host)
+                for (a in addrs) {
+                    if (a.isLoopbackAddress || a.isAnyLocalAddress || a.isLinkLocalAddress || a.isSiteLocalAddress) continue
+                    val key = a.hostAddress ?: continue
+                    result.putIfAbsent(key, host)
+                }
+            } catch (_: Exception) {
+                // 名前解決できないホストは飛ばす
+            }
+        }
+        return result
+    }
+
+    /** CDN のIPは変わるので定期的に解決し直す */
+    private fun refreshLoop() {
+        while (isRunning) {
+            try { Thread.sleep(IP_REFRESH_MS) } catch (_: InterruptedException) { break }
+            if (!isRunning) break
+            refreshIpBlocks()
+        }
+    }
+
+    private fun refreshIpBlocks() {
+        val st = store ?: return
+        val newIps = resolveIpBlocks(st)
+        synchronized(lock) {
+            if (!isRunning) return
+            if (newIps.keys == blockedIps.keys) {
+                blockedIps = newIps
+                return
+            }
+            try {
+                val old = worker
+                blockedIps = newIps
+                worker = establishTunnel(newIps)
+                old?.stop()
+                Stats.log("IP遮断リストを更新: ${newIps.size} 件")
+            } catch (e: Exception) {
+                Stats.log("IP遮断リストの更新に失敗: ${e.message}")
+            }
+        }
+    }
+
     private fun reload() {
         val st = store ?: return
         st.reloadBypass()
         filter = st.buildEngine()
         Stats.log("ルール再読込: ブロック ${filter.blockRuleCount} 件 / 許可 ${filter.allowRuleCount} 件")
+        refreshIpBlocks()
     }
 
     private fun stopVpn() {
         synchronized(lock) {
             val wasRunning = isRunning
             isRunning = false
-            wakeWrite?.let { runCatching { Os.write(it, byteArrayOf(1), 0, 1) } }
-            runCatching { tun?.close() }
-            tun = null
+            refresher?.interrupt()
+            refresher = null
+            worker?.stop()
+            worker = null
             proxy?.stop()
             proxy = null
             dnsPool?.shutdownNow()
             dnsPool = null
-            wakeWrite?.let { runCatching { Os.close(it) } }
-            wakeWrite = null
             mitmActive = false
+            ipRouteCount = 0
             if (wasRunning) Stats.log("停止しました")
         }
     }
 
-    private fun dnsLoop(tunPfd: ParcelFileDescriptor, wake: FileDescriptor) {
-        val tunFd = tunPfd.fileDescriptor
-        val input = FileInputStream(tunFd)
-        val output = FileOutputStream(tunFd)
-        val buf = ByteArray(32767)
-        try {
-            while (isRunning) {
-                val pTun = StructPollfd().also { it.fd = tunFd; it.events = OsConstants.POLLIN.toShort() }
-                val pWake = StructPollfd().also { it.fd = wake; it.events = OsConstants.POLLIN.toShort() }
-                try {
-                    Os.poll(arrayOf(pTun, pWake), -1)
-                } catch (e: ErrnoException) {
-                    if (e.errno == OsConstants.EINTR) continue else throw e
-                }
-                if (pWake.revents.toInt() != 0) break
-                if ((pTun.revents.toInt() and OsConstants.POLLIN) == 0) continue
-                val n = input.read(buf)
-                if (n < 0) break
-                val pkt = Packets.parseIpv4Udp(buf, n) ?: continue
-                if (pkt.dstPort != 53) continue
-                handleDns(pkt, output)
-            }
-        } catch (e: Exception) {
-            if (isRunning) Stats.log("DNS処理エラー: ${e.message}")
-        } finally {
-            runCatching { Os.close(wake) }
+    /** 1つの tun インターフェースを読み続けるスレッド */
+    private inner class TunWorker(private val pfd: ParcelFileDescriptor) {
+        private val pipe = Os.pipe()
+        private val output = FileOutputStream(pfd.fileDescriptor)
+        @Volatile private var stopped = false
+
+        fun start() {
+            thread(name = "vpn-tun", isDaemon = true) { loop() }
         }
+
+        fun stop() {
+            if (stopped) return
+            stopped = true
+            runCatching { Os.write(pipe[1], byteArrayOf(1), 0, 1) }
+            runCatching { Os.close(pipe[1]) }
+            runCatching { pfd.close() }
+        }
+
+        private fun loop() {
+            val tunFd = pfd.fileDescriptor
+            val input = FileInputStream(tunFd)
+            val buf = ByteArray(32767)
+            try {
+                while (!stopped) {
+                    val pTun = StructPollfd().also { it.fd = tunFd; it.events = OsConstants.POLLIN.toShort() }
+                    val pWake = StructPollfd().also { it.fd = pipe[0]; it.events = OsConstants.POLLIN.toShort() }
+                    try {
+                        Os.poll(arrayOf(pTun, pWake), -1)
+                    } catch (e: ErrnoException) {
+                        if (e.errno == OsConstants.EINTR) continue else throw e
+                    }
+                    if (pWake.revents.toInt() != 0) break
+                    if ((pTun.revents.toInt() and OsConstants.POLLIN) == 0) continue
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    handlePacket(buf, n, output)
+                }
+            } catch (e: Exception) {
+                if (!stopped) Stats.log("VPN処理エラー: ${e.message}")
+            } finally {
+                runCatching { Os.close(pipe[0]) }
+            }
+        }
+    }
+
+    private fun handlePacket(buf: ByteArray, n: Int, output: FileOutputStream) {
+        val ip = Packets.parseIp(buf, n) ?: return
+        if (ip.version == 4 && ip.proto == 17 && ip.dst.contentEquals(VPN_DNS_BYTES)) {
+            val udp = Packets.parseIpv4Udp(buf, n) ?: return
+            if (udp.dstPort == 53) handleDns(udp, output)
+            return
+        }
+        // ここに来るのは「IPでもブロック」の経路に一致した通信だけ
+        val addr = ip.dstAddress
+        val host = blockedIps[addr] ?: return
+        Stats.ipBlocked.incrementAndGet()
+        logIpBlock(host, addr)
+        if (ip.proto == 6) Packets.buildTcpRst(buf, ip)?.let { write(output, it) }
+        // UDP（QUIC など）は捨てる
+    }
+
+    private fun logIpBlock(host: String, addr: String) {
+        val now = SystemClock.elapsedRealtime()
+        val last = ipLogTimes[addr] ?: 0L
+        if (now - last < 60_000) return // 同じIPのログは1分に1回まで
+        ipLogTimes[addr] = now
+        Stats.log("IP遮断 $host ($addr)")
     }
 
     private fun handleDns(pkt: Packets.Udp, output: FileOutputStream) {
@@ -196,20 +318,24 @@ class AdBlockVpnService : VpnService() {
             write(output, Packets.buildIpv4Udp(pkt.dstIp, pkt.srcIp, pkt.dstPort, pkt.srcPort, resp))
             return
         }
-        dnsPool?.execute {
-            try {
-                DatagramSocket().use { s ->
-                    protect(s)
-                    s.soTimeout = 5000
-                    s.send(DatagramPacket(pkt.payload, pkt.payload.size, upstreamDns(), 53))
-                    val rb = ByteArray(4096)
-                    val rp = DatagramPacket(rb, rb.size)
-                    s.receive(rp)
-                    write(output, Packets.buildIpv4Udp(pkt.dstIp, pkt.srcIp, pkt.dstPort, pkt.srcPort, rb.copyOf(rp.length)))
+        try {
+            dnsPool?.execute {
+                try {
+                    DatagramSocket().use { s ->
+                        protect(s)
+                        s.soTimeout = 5000
+                        s.send(DatagramPacket(pkt.payload, pkt.payload.size, upstreamDns(), 53))
+                        val rb = ByteArray(4096)
+                        val rp = DatagramPacket(rb, rb.size)
+                        s.receive(rp)
+                        write(output, Packets.buildIpv4Udp(pkt.dstIp, pkt.srcIp, pkt.dstPort, pkt.srcPort, rb.copyOf(rp.length)))
+                    }
+                } catch (_: Exception) {
+                    // タイムアウト等。アプリ側が再送する
                 }
-            } catch (_: Exception) {
-                // タイムアウト等。アプリ側が再送する
             }
+        } catch (_: Exception) {
+            // 停止処理中
         }
     }
 

@@ -58,5 +58,40 @@ fun main() {
     check("chunked copy", out.toString() == "5\r\nhello\r\n0\r\n\r\n")
     check("next request", HttpHead.read(inp)!!.target == "/next")
     check("hostport", splitHostPort("[::1]:8443", 443) == ("::1" to 8443) && splitHostPort("a.com", 443) == ("a.com" to 443) && splitHostPort("a.com:8080", 80) == ("a.com" to 8080))
+
+    // TCP RST (IPv4: SYN を受けて RST+ACK)
+    fun verifyTcp(rst: ByteArray, v: Int): Boolean {
+        val ip = Packets.parseIp(rst, rst.size)!!
+        val seg = rst.copyOfRange(ip.headerLen, ip.totalLen)
+        val pseudo = if (v == 4) ByteArray(12).also { System.arraycopy(ip.src,0,it,0,4); System.arraycopy(ip.dst,0,it,4,4); it[9]=6; Packets.put16(it,10,seg.size) }
+                     else ByteArray(40).also { System.arraycopy(ip.src,0,it,0,16); System.arraycopy(ip.dst,0,it,16,16); Packets.put32(it,32,seg.size.toLong()); it[39]=6 }
+        var s = Packets.sum16(pseudo) + Packets.sum16(seg); while (s shr 16 != 0L) s = (s and 0xFFFF) + (s shr 16)
+        return s == 0xFFFFL
+    }
+    val syn = ByteArray(40).also {
+        it[0]=0x45; Packets.put16(it,2,40); it[8]=64; it[9]=6
+        byteArrayOf(10,0,0,5).copyInto(it,12); byteArrayOf(93,184.toByte(),216.toByte(),34).copyInto(it,16)
+        Packets.put16(it,20,40000); Packets.put16(it,22,443); Packets.put32(it,24,1000L); it[32]=0x50; it[33]=0x02
+    }
+    val sip = Packets.parseIp(syn, syn.size)!!
+    check("parse v4 tcp", sip.version == 4 && sip.proto == 6 && sip.dstAddress == "93.184.216.34")
+    val rst = Packets.buildTcpRst(syn, sip)!!
+    val rip = Packets.parseIp(rst, rst.size)!!
+    check("rst v4 addresses/ports", rip.dstAddress == "10.0.0.5" && Packets.u16(rst,20) == 443 && Packets.u16(rst,22) == 40000)
+    check("rst v4 flags/ack", rst[33].toInt() == 0x14 && Packets.u32(rst,28) == 1001L)
+    check("rst v4 tcp checksum", verifyTcp(rst, 4))
+    var hs = 0L; for (i in 0 until 20 step 2) hs += Packets.u16(rst, i); while (hs shr 16 != 0L) hs = (hs and 0xFFFF) + (hs shr 16)
+    check("rst v4 ip checksum", hs == 0xFFFFL)
+    check("no reply to rst", Packets.buildTcpRst(rst, rip) == null)
+    // IPv6 ACK 付きデータ → RST(seq=相手のack)
+    val v6 = ByteArray(60).also {
+        it[0]=0x60; Packets.put16(it,4,20); it[6]=6; it[7]=64
+        java.net.InetAddress.getByName("fd00::2").address.copyInto(it,8); java.net.InetAddress.getByName("2001:db8::1").address.copyInto(it,24)
+        Packets.put16(it,40,50000); Packets.put16(it,42,443); Packets.put32(it,44,5L); Packets.put32(it,48,77777L); it[52]=0x50; it[53]=0x10
+    }
+    val ip6 = Packets.parseIp(v6, v6.size)!!
+    val rst6 = Packets.buildTcpRst(v6, ip6)!!
+    check("rst v6", Packets.parseIp(rst6, rst6.size)!!.dstAddress == java.net.InetAddress.getByName("fd00::2").hostAddress && rst6[53].toInt() == 0x04 && Packets.u32(rst6,44) == 77777L)
+    check("rst v6 tcp checksum", verifyTcp(rst6, 6))
     println(if (failed == 0) "ALL PASSED" else "$failed FAILED")
 }

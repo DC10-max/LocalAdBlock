@@ -18,6 +18,7 @@ class RuleStore(private val ctx: Context) {
     val customBlockFile = File(dir, "custom_block.txt")
     val subscriptionsFile = File(dir, "subscriptions.txt")
     val bypassFile = File(dir, "bypass.txt")
+    val ipBlockFile = File(dir, "ip_block.txt")
     private val autoBypassFile = File(dir, "auto_bypass.txt")
 
     private val prefs = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -40,6 +41,7 @@ class RuleStore(private val ctx: Context) {
             customBlockFile to "default_custom_block.txt",
             subscriptionsFile to "default_subscriptions.txt",
             bypassFile to "default_bypass.txt",
+            ipBlockFile to "default_ip_block.txt",
         ).forEach { (f, asset) ->
             if (!f.exists()) ctx.assets.open(asset).use { i -> f.outputStream().use { i.copyTo(it) } }
         }
@@ -85,6 +87,15 @@ class RuleStore(private val ctx: Context) {
         autoBypass.clear()
         autoBypassFile.delete()
     }
+
+    // ---- IPブロック（DNSを使わないアプリ対策） ----
+
+    /** IPアドレスでも遮断するホスト名（またはIPアドレス）の一覧 */
+    fun ipBlockHosts(): List<String> =
+        readText(ipBlockFile).lines()
+            .map { it.substringBefore('#').trim().lowercase().removePrefix("||").removeSuffix("^") }
+            .filter { it.isNotEmpty() && !it.startsWith("!") && !it.contains('/') && !it.contains('*') }
+            .distinct()
 
     // ---- 購読リスト ----
 

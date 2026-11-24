@@ -10,6 +10,7 @@ object Stats {
     val httpBlocked = AtomicLong()
     val allowedByList = AtomicLong()
     val tlsBypassed = AtomicLong()
+    val ipBlocked = AtomicLong()
 
     private val recent = ArrayDeque<String>()
     private val fmt = SimpleDateFormat("HH:mm:ss", Locale.US)

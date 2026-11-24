@@ -33,6 +33,8 @@ class MitmProxy(
     private val ca: CertificateAuthority,
     private val store: RuleStore,
     private val mitmActive: () -> Boolean,
+    /** IPアドレス → ブロック対象ホスト名（IPブロック対象でなければ null） */
+    private val blockedIpHost: (String) -> String?,
 ) {
     private var server: ServerSocket? = null
     private val pool: ExecutorService = Executors.newCachedThreadPool()
@@ -80,6 +82,12 @@ class MitmProxy(
 
     private fun handleConnect(client: Socket, cin: BufferedInputStream, cout: OutputStream, head: HttpHead) {
         val (host, port) = splitHostPort(head.target, 443) ?: return writeSimple(cout, 400, "Bad Request")
+        ipBlocked(host)?.let { name ->
+            Stats.ipBlocked.incrementAndGet()
+            Stats.log("IP遮断(プロキシ) $host ($name)")
+            writeSimple(cout, 403, "Blocked by LocalAdBlock")
+            return
+        }
         // 200 を返す前に判定する（クライアントは 200 を受け取るまで TLS を始めない）
         val inspect = mitmActive() && !store.isBypassed(host) && cin.available() == 0
         if (filter().checkHost(host, inspectable = inspect) == FilterEngine.Decision.BLOCKED) {
@@ -139,7 +147,9 @@ class MitmProxy(
         var head = first ?: HttpHead.read(cin) ?: return
         while (true) {
             val target = resolveTarget(head, connectHost, connectPort, tls) ?: return writeSimple(cout, 400, "Bad Request")
-            when (filter().checkUrl(target.url, target.host)) {
+            val decision = if (ipBlocked(target.host) != null) FilterEngine.Decision.BLOCKED
+            else filter().checkUrl(target.url, target.host)
+            when (decision) {
                 FilterEngine.Decision.BLOCKED -> {
                     Stats.httpBlocked.incrementAndGet()
                     Stats.log("遮断 ${shorten(target.url)}")
@@ -258,6 +268,14 @@ class MitmProxy(
         out.flush()
     }
 
+    /** host がIPアドレスで、IPブロック対象ならそのホスト名を返す（名前解決はしない） */
+    private fun ipBlocked(host: String): String? {
+        val h = host.removePrefix("[").removeSuffix("]")
+        if (!IPV4.matches(h) && !h.contains(':')) return null
+        val normalized = try { InetAddress.getByName(h).hostAddress } catch (e: Exception) { return null }
+        return normalized?.let(blockedIpHost)
+    }
+
     private fun shorten(url: String) = if (url.length > 120) url.take(117) + "..." else url
 
     companion object {
@@ -265,6 +283,7 @@ class MitmProxy(
             "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n" +
                 "Access-Control-Allow-Origin: *\r\nCache-Control: no-store\r\n\r\n"
             ).toByteArray()
+        private val IPV4 = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
         private val HOP_HEADERS = setOf(
             "connection", "proxy-connection", "keep-alive", "proxy-authorization",
             "proxy-authenticate", "te", "trailer", "upgrade", "expect",

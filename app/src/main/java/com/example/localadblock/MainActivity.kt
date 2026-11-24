@@ -5,6 +5,8 @@ import android.app.Activity
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
@@ -29,6 +31,8 @@ class MainActivity : Activity() {
     private lateinit var tvCa: TextView
     private lateinit var tvSubsResult: TextView
     private lateinit var tvAutoBypass: TextView
+    private lateinit var tvWarn: TextView
+    private lateinit var etIpBlock: EditText
     private lateinit var btnToggle: Button
     private lateinit var swMitm: Switch
     private lateinit var etAllow: EditText
@@ -54,6 +58,8 @@ class MainActivity : Activity() {
         tvCa = findViewById(R.id.tvCa)
         tvSubsResult = findViewById(R.id.tvSubsResult)
         tvAutoBypass = findViewById(R.id.tvAutoBypass)
+        tvWarn = findViewById(R.id.tvWarn)
+        etIpBlock = findViewById(R.id.etIpBlock)
         btnToggle = findViewById(R.id.btnToggle)
         swMitm = findViewById(R.id.swMitm)
         etAllow = findViewById(R.id.etAllow)
@@ -65,6 +71,7 @@ class MainActivity : Activity() {
         etBlock.setText(store.readText(store.customBlockFile))
         etSubs.setText(store.readText(store.subscriptionsFile))
         etBypass.setText(store.readText(store.bypassFile))
+        etIpBlock.setText(store.readText(store.ipBlockFile))
 
         swMitm.isChecked = store.mitmEnabled
         swMitm.setOnCheckedChangeListener { _, checked ->
@@ -82,6 +89,7 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.btnSaveRules).setOnClickListener {
             store.writeText(store.allowFile, etAllow.text.toString())
             store.writeText(store.customBlockFile, etBlock.text.toString())
+            store.writeText(store.ipBlockFile, etIpBlock.text.toString())
             reloadService()
             toast("保存しました")
         }
@@ -120,6 +128,29 @@ class MainActivity : Activity() {
         handler.post(refresher)
         refreshCaState()
         refreshAutoBypass()
+        refreshWarnings()
+    }
+
+    /** DNSブロックを迂回させる設定を検出して警告する */
+    @Suppress("DEPRECATION")
+    private fun refreshWarnings() {
+        val strict = try {
+            val cm = getSystemService(ConnectivityManager::class.java)
+            cm.allNetworks.any { n ->
+                val c = cm.getNetworkCapabilities(n)
+                c != null && !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                    cm.getLinkProperties(n)?.privateDnsServerName != null
+            }
+        } catch (e: Exception) {
+            false
+        }
+        if (strict) {
+            tvWarn.text = "⚠ プライベートDNSが「ホスト名を指定」になっています。DNSでのブロックが効かない場合があります。" +
+                "設定 → ネットワーク → プライベートDNS を「自動」か「OFF」にしてください。"
+            tvWarn.visibility = android.view.View.VISIBLE
+        } else {
+            tvWarn.visibility = android.view.View.GONE
+        }
     }
 
     override fun onPause() {
@@ -206,6 +237,7 @@ class MainActivity : Activity() {
         }
         btnToggle.text = if (running) "停止" else "開始"
         tvStats.text = "DNSで遮断: ${Stats.dnsBlocked.get()}　URLで遮断: ${Stats.httpBlocked.get()}\n" +
+            "IPで遮断: ${Stats.ipBlocked.get()}（対象 ${AdBlockVpnService.ipRouteCount} 件）\n" +
             "許可リストで通過: ${Stats.allowedByList.get()}　HTTPS検査不可: ${Stats.tlsBypassed.get()}"
         tvLog.text = Stats.recent().take(60).joinToString("\n")
     }
