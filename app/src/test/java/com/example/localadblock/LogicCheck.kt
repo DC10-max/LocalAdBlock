@@ -93,5 +93,21 @@ fun main() {
     val rst6 = Packets.buildTcpRst(v6, ip6)!!
     check("rst v6", Packets.parseIp(rst6, rst6.size)!!.dstAddress == java.net.InetAddress.getByName("fd00::2").hostAddress && rst6[53].toInt() == 0x04 && Packets.u32(rst6,44) == 77777L)
     check("rst v6 tcp checksum", verifyTcp(rst6, 6))
+
+    // 広告判定
+    fun lv(h: String) = AdHeuristics.classify(h).level
+    check("network", AdHeuristics.classify("auction-load.unityads.unity3d.com").rule == "unityads.unity3d.com" && lv("x.mintegral.net") == AdHeuristics.Level.STRONG)
+    check("strong label", lv("ads.example.co.jp") == AdHeuristics.Level.STRONG && lv("adserver2.foo.com") == AdHeuristics.Level.STRONG && lv("rtb-jp.bar.net") == AdHeuristics.Level.STRONG)
+    check("strong rule is exact host", AdHeuristics.classify("ads.example.co.jp").rule == "ads.example.co.jp")
+    check("weak", lv("tracking.shop.jp") == AdHeuristics.Level.WEAK && lv("analytics.foo.com") == AdHeuristics.Level.WEAK)
+    check("no false positive", lv("downloads.example.com") == AdHeuristics.Level.NONE && lv("adobe.com") == AdHeuristics.Level.NONE && lv("uploads.github.com") == AdHeuristics.Level.NONE && lv("shadow.jp") == AdHeuristics.Level.NONE)
+    check("protected", lv("ads.google.com") == AdHeuristics.Level.NONE && lv("ads-cdn.cloudfront.net") == AdHeuristics.Level.NONE)
+    check("unity3d not whole", lv("config.uca.cloud.unity3d.com") == AdHeuristics.Level.NONE)
+    // 動的ブロック
+    f.addDynamicBlock("newads.example")
+    check("dynamic block", f.checkHost("x.newads.example") == BLOCKED && f.checkUrl("https://newads.example/a", "newads.example") == BLOCKED)
+    check("user allowed", f.isUserAllowed("good-ads.example") && f.isUserAllowed("partner.ads.example.com") && !f.isUserAllowed("ads.example.com"))
+    DnsHistory.add("A.Example.", 10123, false, DnsHistory.VIA_DNS)
+    check("history", DnsHistory.since(60_000).last().host == "a.example")
     println(if (failed == 0) "ALL PASSED" else "$failed FAILED")
 }

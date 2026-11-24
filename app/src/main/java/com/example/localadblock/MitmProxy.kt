@@ -90,7 +90,12 @@ class MitmProxy(
         }
         // 200 を返す前に判定する（クライアントは 200 を受け取るまで TLS を始めない）
         val inspect = mitmActive() && !store.isBypassed(host) && cin.available() == 0
-        if (filter().checkHost(host, inspectable = inspect) == FilterEngine.Decision.BLOCKED) {
+        val f = filter()
+        val decision = f.checkHost(host, inspectable = inspect)
+        val blocked = decision == FilterEngine.Decision.BLOCKED ||
+            (decision == FilterEngine.Decision.PASS && AutoBlocker.tryBlock(f, store, host))
+        DnsHistory.add(host, -1, blocked, DnsHistory.VIA_PROXY)
+        if (blocked) {
             Stats.httpBlocked.incrementAndGet()
             Stats.log("接続遮断 $host")
             writeSimple(cout, 403, "Blocked by LocalAdBlock")
@@ -147,8 +152,15 @@ class MitmProxy(
         var head = first ?: HttpHead.read(cin) ?: return
         while (true) {
             val target = resolveTarget(head, connectHost, connectPort, tls) ?: return writeSimple(cout, 400, "Bad Request")
-            val decision = if (ipBlocked(target.host) != null) FilterEngine.Decision.BLOCKED
-            else filter().checkUrl(target.url, target.host)
+            val f = filter()
+            var decision = if (ipBlocked(target.host) != null) FilterEngine.Decision.BLOCKED
+            else f.checkUrl(target.url, target.host)
+            if (!tls) {
+                if (decision == FilterEngine.Decision.PASS && AutoBlocker.tryBlock(f, store, target.host)) {
+                    decision = FilterEngine.Decision.BLOCKED
+                }
+                DnsHistory.add(target.host, -1, decision == FilterEngine.Decision.BLOCKED, DnsHistory.VIA_PROXY)
+            }
             when (decision) {
                 FilterEngine.Decision.BLOCKED -> {
                     Stats.httpBlocked.incrementAndGet()

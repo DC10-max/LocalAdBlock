@@ -35,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var etIpBlock: EditText
     private lateinit var btnToggle: Button
     private lateinit var swMitm: Switch
+    private lateinit var swAuto: Switch
     private lateinit var etAllow: EditText
     private lateinit var etBlock: EditText
     private lateinit var etSubs: EditText
@@ -62,6 +63,7 @@ class MainActivity : Activity() {
         etIpBlock = findViewById(R.id.etIpBlock)
         btnToggle = findViewById(R.id.btnToggle)
         swMitm = findViewById(R.id.swMitm)
+        swAuto = findViewById(R.id.swAuto)
         etAllow = findViewById(R.id.etAllow)
         etBlock = findViewById(R.id.etBlock)
         etSubs = findViewById(R.id.etSubs)
@@ -77,6 +79,12 @@ class MainActivity : Activity() {
         swMitm.setOnCheckedChangeListener { _, checked ->
             store.mitmEnabled = checked
             toast("次回の開始から反映されます")
+        }
+
+        swAuto.isChecked = store.autoBlockEnabled
+        swAuto.setOnCheckedChangeListener { _, checked -> store.autoBlockEnabled = checked }
+        findViewById<Button>(R.id.btnFinder).setOnClickListener {
+            startActivity(Intent(this, AdFinderActivity::class.java))
         }
 
         btnToggle.setOnClickListener {
@@ -129,6 +137,8 @@ class MainActivity : Activity() {
         refreshCaState()
         refreshAutoBypass()
         refreshWarnings()
+        // 自動登録・広告探しで追記された内容を反映（編集中は上書きしない）
+        if (!etBlock.hasFocus()) etBlock.setText(store.readText(store.customBlockFile))
     }
 
     /** DNSブロックを迂回させる設定を検出して警告する */
@@ -237,7 +247,7 @@ class MainActivity : Activity() {
         }
         btnToggle.text = if (running) "停止" else "開始"
         tvStats.text = "DNSで遮断: ${Stats.dnsBlocked.get()}　URLで遮断: ${Stats.httpBlocked.get()}\n" +
-            "IPで遮断: ${Stats.ipBlocked.get()}（対象 ${AdBlockVpnService.ipRouteCount} 件）\n" +
+            "IPで遮断: ${Stats.ipBlocked.get()}（対象 ${AdBlockVpnService.ipRouteCount} 件）　自動登録: ${Stats.autoAdded.get()}\n" +
             "許可リストで通過: ${Stats.allowedByList.get()}　HTTPS検査不可: ${Stats.tlsBypassed.get()}"
         tvLog.text = Stats.recent().take(60).joinToString("\n")
     }

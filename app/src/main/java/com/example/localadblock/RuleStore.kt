@@ -31,6 +31,25 @@ class RuleStore(private val ctx: Context) {
         reloadBypass()
     }
 
+    /** 広告っぽい通信先を自動で追加ブロックリストに登録する */
+    var autoBlockEnabled: Boolean
+        get() = prefs.getBoolean("autoBlock", true)
+        set(v) = prefs.edit().putBoolean("autoBlock", v).apply()
+
+    /** 追加ブロックリストの末尾に ||domain^ 形式で追記する。追加した行を返す */
+    fun appendBlockRules(domains: Collection<String>, header: String): List<String> = synchronized(FILE_LOCK) {
+        val existing = readText(customBlockFile).lines().map { it.trim().lowercase() }.toSet()
+        val toAdd = domains.map { "||${FilterEngine.normalize(it)}^" }.distinct().filter { it !in existing }
+        if (toAdd.isEmpty()) return emptyList()
+        val cur = readText(customBlockFile)
+        val sb = StringBuilder()
+        if (cur.isNotEmpty() && !cur.endsWith("\n")) sb.append('\n')
+        sb.append("! ").append(header).append('\n')
+        toAdd.forEach { sb.append(it).append('\n') }
+        customBlockFile.appendText(sb.toString())
+        toAdd
+    }
+
     var mitmEnabled: Boolean
         get() = prefs.getBoolean("mitm", true)
         set(v) = prefs.edit().putBoolean("mitm", v).apply()
@@ -131,6 +150,10 @@ class RuleStore(private val ctx: Context) {
             }
         }
         return sb.toString()
+    }
+
+    companion object {
+        private val FILE_LOCK = Any()
     }
 
     fun buildEngine(): FilterEngine {

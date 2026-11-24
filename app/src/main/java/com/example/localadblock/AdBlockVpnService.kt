@@ -26,6 +26,7 @@ import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -76,6 +77,7 @@ class AdBlockVpnService : VpnService() {
     private var refresher: Thread? = null
     private val lock = Any()
     private val ipLogTimes = ConcurrentHashMap<String, Long>()
+    private val cm by lazy { getSystemService(ConnectivityManager::class.java) }
 
     @Volatile private var cachedDns: InetAddress? = null
     @Volatile private var cachedDnsAt = 0L
@@ -311,13 +313,43 @@ class AdBlockVpnService : VpnService() {
 
     private fun handleDns(pkt: Packets.Udp, output: FileOutputStream) {
         val name = Dns.questionName(pkt.payload)
-        if (name != null && filter.checkHost(name) == FilterEngine.Decision.BLOCKED) {
+        if (name != null) {
+            val f = filter
+            val st = store
+            val decision = f.checkHost(name)
+            val blocked = decision == FilterEngine.Decision.BLOCKED ||
+                (decision == FilterEngine.Decision.PASS && st != null && AutoBlocker.tryBlock(f, st, name))
+            recordQuery(name, pkt, blocked)
+            if (!blocked) return forwardDns(pkt, output)
             Stats.dnsBlocked.incrementAndGet()
             Stats.log("DNS遮断 $name")
             val resp = Dns.blockedResponse(pkt.payload) ?: return
             write(output, Packets.buildIpv4Udp(pkt.dstIp, pkt.srcIp, pkt.dstPort, pkt.srcPort, resp))
             return
         }
+        forwardDns(pkt, output)
+    }
+
+    /** どのアプリの問い合わせかを調べて履歴に残す（「広告が出た」画面用） */
+    private fun recordQuery(name: String, pkt: Packets.Udp, blocked: Boolean) {
+        try {
+            dnsPool?.execute {
+                val uid = try {
+                    cm.getConnectionOwnerUid(
+                        OsConstants.IPPROTO_UDP,
+                        InetSocketAddress(InetAddress.getByAddress(pkt.srcIp), pkt.srcPort),
+                        InetSocketAddress(InetAddress.getByAddress(pkt.dstIp), pkt.dstPort),
+                    )
+                } catch (_: Exception) {
+                    -1
+                }
+                DnsHistory.add(name, uid, blocked, DnsHistory.VIA_DNS)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun forwardDns(pkt: Packets.Udp, output: FileOutputStream) {
         try {
             dnsPool?.execute {
                 try {
@@ -387,6 +419,11 @@ class AdBlockVpnService : VpnService() {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )
+        val finder = PendingIntent.getActivity(
+            this, 2,
+            Intent(this, AdFinderActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
         val stop = PendingIntent.getService(
             this, 1, Intent(this, AdBlockVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE,
         )
@@ -396,6 +433,11 @@ class AdBlockVpnService : VpnService() {
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
+            .addAction(
+                Notification.Action.Builder(
+                    Icon.createWithResource(this, android.R.drawable.ic_menu_search), "広告が出た", finder,
+                ).build(),
+            )
             .addAction(
                 Notification.Action.Builder(
                     Icon.createWithResource(this, android.R.drawable.ic_media_pause), "停止", stop,

@@ -1,5 +1,7 @@
 package com.example.localadblock
 
+import java.util.concurrent.ConcurrentHashMap
+
 /**
  * ブロックリスト + 許可リスト（ホワイトリスト）の判定エンジン。
  *
@@ -24,6 +26,19 @@ class FilterEngine private constructor(
 ) {
     enum class Decision { ALLOWED_BY_LIST, BLOCKED, PASS }
 
+    /** 実行中に自動追加されたブロック対象（次の再構築ではファイルから読み込まれる） */
+    private val dynamicBlock: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    fun addDynamicBlock(domain: String) {
+        dynamicBlock.add(normalize(domain))
+    }
+
+    /** ユーザーの許可リストに関係するホストか（自動ブロックしない） */
+    fun isUserAllowed(host: String): Boolean {
+        val h = normalize(host)
+        return matchDomain(allowDomains, h) || matchDomain(allowUrlHosts, h)
+    }
+
     val blockRuleCount: Int get() = blockDomains.size + blockUrlRules.size
     val allowRuleCount: Int get() = allowDomains.size + allowUrlRules.size
 
@@ -38,7 +53,7 @@ class FilterEngine private constructor(
         if (matchDomain(allowUrlHosts, h)) return Decision.PASS
         // 購読リストの例外(@@)ルールは、URLを検査できる場合だけ考慮する
         if (inspectable && matchDomain(exceptionUrlHosts, h)) return Decision.PASS
-        if (matchDomain(blockDomains, h)) return Decision.BLOCKED
+        if (matchDomain(blockDomains, h) || matchDomain(dynamicBlock, h)) return Decision.BLOCKED
         return Decision.PASS
     }
 
@@ -47,7 +62,7 @@ class FilterEngine private constructor(
         val h = normalize(host)
         val u = url.lowercase()
         if (matchDomain(allowDomains, h) || allowUrlRules.any { it.matches(u) }) return Decision.ALLOWED_BY_LIST
-        if (matchDomain(blockDomains, h) || blockUrlRules.any { it.matches(u) }) return Decision.BLOCKED
+        if (matchDomain(blockDomains, h) || matchDomain(dynamicBlock, h) || blockUrlRules.any { it.matches(u) }) return Decision.BLOCKED
         return Decision.PASS
     }
 

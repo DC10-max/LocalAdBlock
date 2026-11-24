@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 「広告が出た」画面で、通信したアプリの名前を表示するため -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        xmlns:tools="http://schemas.android.com/tools"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <!-- allowBackup=false: CA秘密鍵をバックアップに含めない -->
     <application
@@ -23,6 +28,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".AdFinderActivity"
+            android:exported="false"
+            android:label="広告を見つける"
+            android:taskAffinity=""
+            android:excludeFromRecents="true" />
 
         <service
             android:name=".AdBlockVpnService"

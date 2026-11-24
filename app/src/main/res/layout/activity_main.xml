@@ -38,6 +38,20 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp" />
 
+        <Button
+            android:id="@+id/btnFinder"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="広告が出た！（直前の通信から探す）" />
+
+        <Switch
+            android:id="@+id/swAuto"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="広告っぽい通信先を自動でブロックリストに登録する" />
+
         <!-- HTTPS検査 -->
         <TextView style="@style/Section" android:text="HTTPS検査（CA証明書）" />
 
