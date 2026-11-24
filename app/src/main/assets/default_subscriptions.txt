@@ -1,0 +1,9 @@
+# 1行に1つ、フィルタリストのURLを書きます（# で始まる行は無視）
+# EasyList（世界標準の広告フィルタ）
+https://easylist.to/easylist/easylist.txt
+# AdGuard 日本語フィルタ
+https://filters.adtidy.org/extension/ublock/filters/7.txt
+# Peter Lowe's Ad server list
+https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=0&mimetype=plaintext
+# 豆腐フィルタ（使う場合は先頭の # を消す）
+# https://raw.githubusercontent.com/tofukko/filter/master/Adblock_Plus_list.txt

@@ -1,0 +1,11 @@
+# HTTPS検査をせず、そのまま通すドメイン（サブドメイン含む）
+# 銀行・決済・ログインなど、中身を見るべきでない／証明書ピンニングで壊れるものを書きます。
+# ※ここに書いても「ドメイン単位のブロック」は効きます。
+accounts.google.com
+play.googleapis.com
+android.clients.google.com
+paypal.com
+apple.com
+icloud.com
+# 例: 利用している銀行
+# example-bank.co.jp

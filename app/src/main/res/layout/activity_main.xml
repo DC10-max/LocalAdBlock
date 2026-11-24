@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnToggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="開始" />
+
+        <TextView
+            android:id="@+id/tvStats"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp" />
+
+        <!-- HTTPS検査 -->
+        <TextView style="@style/Section" android:text="HTTPS検査（CA証明書）" />
+
+        <Switch
+            android:id="@+id/swMitm"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="HTTPSの中身を検査してURL単位でブロックする" />
+
+        <TextView
+            android:id="@+id/tvCa"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnExportCa"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="CA証明書を保存" />
+
+            <Button
+                android:id="@+id/btnOpenSettings"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="設定を開く" />
+        </LinearLayout>
+
+        <!-- 許可リスト -->
+        <TextView style="@style/Section" android:text="許可リスト（ここに書いた広告だけ表示）" />
+
+        <EditText
+            android:id="@+id/etAllow"
+            style="@style/RuleEditor" />
+
+        <TextView style="@style/Section" android:text="追加ブロックリスト" />
+
+        <EditText
+            android:id="@+id/etBlock"
+            style="@style/RuleEditor" />
+
+        <Button
+            android:id="@+id/btnSaveRules"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="許可リスト・ブロックリストを保存" />
+
+        <!-- 購読 -->
+        <TextView style="@style/Section" android:text="購読するフィルタリスト（1行1URL）" />
+
+        <EditText
+            android:id="@+id/etSubs"
+            style="@style/RuleEditor" />
+
+        <Button
+            android:id="@+id/btnUpdateSubs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="保存してダウンロード" />
+
+        <TextView
+            android:id="@+id/tvSubsResult"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="11sp" />
+
+        <!-- バイパス -->
+        <TextView style="@style/Section" android:text="HTTPS検査をしないドメイン" />
+
+        <EditText
+            android:id="@+id/etBypass"
+            style="@style/RuleEditor" />
+
+        <Button
+            android:id="@+id/btnSaveBypass"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="保存" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="自動バイパス（検査できなかったホスト）:" />
+
+        <TextView
+            android:id="@+id/tvAutoBypass"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="11sp" />
+
+        <Button
+            android:id="@+id/btnClearAuto"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="自動バイパスを消去" />
+
+        <!-- ログ -->
+        <TextView style="@style/Section" android:text="最近のログ" />
+
+        <TextView
+            android:id="@+id/tvLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true"
+            android:textSize="11sp" />
+    </LinearLayout>
+</ScrollView>
